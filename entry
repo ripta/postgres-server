@@ -1,0 +1,59 @@
+#!/bin/sh
+
+# From: https://github.com/docker-library/postgres/blob/master/9.4/docker-entrypoint.sh
+
+#trap 'exit' ERR
+set -e
+
+if [ "$1" = "postgres" ]
+then
+	chown -R postgres:postgres "$PGDATA"
+
+	if [ -z "$(ls -A "$PGDATA")" ]
+	then
+		/bin/gosu postgres initdb
+
+		sed -ri "s/^#(listen_addresses\s*=\s*)\S+/\1'*'/" "$PGDATA"/postgresql.conf
+
+		if [ ! -z "$POSTGRES_PASSWORD" ]
+		then
+			PASS="PASSWORD '$POSTGRES_PASSWORD'"
+			AUTH=md5
+		else
+			echo "No password was set." >&2
+			echo "Set it using -e POSTGRES_PASSWORD=something during 'docker run'." >&2
+			PASS=
+			AUTH=trust
+		fi
+
+		: ${POSTGRES_USER:=postgres}
+		: ${POSTGRES_DB:=$POSTGRES_USER}
+
+		if [ "$POSTGRES_DB" != "postgres" ]
+		then
+			/bin/gosu postgres postgres --single -j -E <<-EOSQL
+				CREATE DATABASE "$POSTGRES_DB";
+			EOSQL
+			echo
+		fi
+
+		if [ "$POSTGRES_USER" = "postgres" ]
+		then
+			OPER="ALTER"
+		else
+			OPER="CREATE"
+		fi
+
+		/bin/gosu postgres postgres --single -j -E <<-EOSQL
+			$OPER USER "$POSTGRES_USER" WITH SUPERUSER $PASS;
+		EOSQL
+		echo
+
+		echo "host all all 0.0.0.0/0 $AUTH" >> "$PGDATA/pg_hba.conf"
+	fi
+
+	exec /bin/gosu postgres "$@"
+else
+	exec "$@"
+fi
+
